@@ -39,7 +39,7 @@ final class Preferences: ObservableObject {
     init() {
         buddyEnabled = d.object(forKey: "buddyEnabled") as? Bool ?? true
         buddyShowCount = d.object(forKey: "buddyShowCount") as? Bool ?? true
-        buddyShape = BuddyShape(rawValue: d.string(forKey: "buddyShape") ?? "") ?? .dot
+        buddyShape = BuddyShape(rawValue: d.string(forKey: "buddyShape") ?? "") ?? .bubble
         buddySize = BuddySize(rawValue: d.string(forKey: "buddySize") ?? "") ?? .medium
         autoListen = d.bool(forKey: "autoListen")
         autoExtractText = d.bool(forKey: "autoExtractText")

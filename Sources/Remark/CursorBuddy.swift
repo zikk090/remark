@@ -25,7 +25,7 @@ final class BuddyModel: ObservableObject {
     @Published var listening: Bool = false
     @Published var showCount: Bool = true
     @Published var size: BuddySize = .medium
-    @Published var shape: BuddyShape = .dot
+    @Published var shape: BuddyShape = .bubble
 }
 
 /// A small arrowhead pointer, tip at the top-left corner of its frame.
@@ -164,7 +164,8 @@ final class CursorBuddy {
     private var position: CGPoint?   // where the buddy's tip currently is (screen coords)
 
     /// Offset of the buddy's tip from the real cursor's tip.
-    private let offset = CGVector(dx: 14, dy: -18)
+    /// Sits to the right of the arrow, vertically level with its upper half.
+    private let offset = CGVector(dx: 22, dy: 6)
     private let inset = CGPoint(x: 6, y: 6) // matches BuddyView padding
 
     var enabled = false { didSet { update() } }
