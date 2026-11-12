@@ -131,7 +131,7 @@ final class SelectionView: NSView {
             NSColor.clear.setFill()
             rect.fill(using: .copy)
 
-            let accent = NSColor(calibratedRed: 1.0, green: 0.55, blue: 0.1, alpha: 1)
+            let accent = Theme.nsAccent
             accent.setStroke()
             let path = NSBezierPath(rect: rect.insetBy(dx: -1, dy: -1))
             path.lineWidth = 2

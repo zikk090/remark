@@ -19,7 +19,7 @@ enum NoteKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .note: return "#6B7280"
         case .bug: return "#DC2626"
-        case .ux: return "#7C3AED"
+        case .ux: return "#EA580C"
         case .question: return "#2563EB"
         case .idea: return "#059669"
         }
@@ -32,8 +32,25 @@ struct ReviewNote: Codable, Identifiable {
     var createdAt: Date
     var kind: NoteKind
     var text: String
-    var imageFile: String // relative to the session folder
+    var imageFile: String?  // relative to the session folder; nil for text-selection notes
     var sourceApp: String?
+    var quote: String?      // selected text, or text pulled from the screenshot
+    var windowTitle: String?
+
+    var context: String? {
+        let parts = [sourceApp, windowTitle].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " — ")
+    }
+}
+
+extension NoteKind {
+    var nsColor: NSColor {
+        let hex = colorHex.dropFirst()
+        let v = UInt32(hex, radix: 16) ?? 0x6B7280
+        return NSColor(srgbRed: CGFloat((v >> 16) & 0xFF) / 255,
+                       green: CGFloat((v >> 8) & 0xFF) / 255,
+                       blue: CGFloat(v & 0xFF) / 255, alpha: 1)
+    }
 }
 
 struct ReviewSession: Codable {
@@ -120,15 +137,19 @@ final class SessionStore {
         return folder!.appendingPathComponent("shots", isDirectory: true).appendingPathComponent(name)
     }
 
-    func add(kind: NoteKind, text: String, imageURL: URL, sourceApp: String?) {
+    func add(kind: NoteKind, text: String, imageURL: URL?, quote: String?,
+             sourceApp: String?, windowTitle: String?) {
         guard var s = session else { return }
         let n = (s.notes.map(\.number).max() ?? 0) + 1
+        let cleanQuote = quote?.trimmingCharacters(in: .whitespacesAndNewlines)
         s.notes.append(ReviewNote(number: n,
                                   createdAt: Date(),
                                   kind: kind,
                                   text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-                                  imageFile: "shots/" + imageURL.lastPathComponent,
-                                  sourceApp: sourceApp))
+                                  imageFile: imageURL.map { "shots/" + $0.lastPathComponent },
+                                  sourceApp: sourceApp,
+                                  quote: (cleanQuote?.isEmpty ?? true) ? nil : cleanQuote,
+                                  windowTitle: windowTitle))
         session = s
         save()
     }
@@ -175,8 +196,14 @@ final class SessionStore {
         var md = "# \(s.title)\n\n"
         md += "_Reviewed by \(s.reviewer) · \(Self.display.string(from: s.createdAt)) · \(s.notes.count) note\(s.notes.count == 1 ? "" : "s")_\n\n"
         for n in s.notes {
-            md += "## \(n.number). [\(n.kind.label)]\(n.sourceApp.map { " — \($0)" } ?? "")\n\n"
-            md += "![Note \(n.number)](\(n.imageFile))\n\n"
+            md += "## \(n.number). [\(n.kind.label)]\(n.context.map { " — \($0)" } ?? "")\n\n"
+            if let q = n.quote {
+                md += q.split(separator: "\n", omittingEmptySubsequences: false)
+                    .map { "> " + $0 }.joined(separator: "\n") + "\n\n"
+            }
+            if let img = n.imageFile {
+                md += "![Note \(n.number)](\(img))\n\n"
+            }
             md += (n.text.isEmpty ? "_(no note)_" : n.text) + "\n\n"
             md += "<sub>\(Self.time.string(from: n.createdAt))</sub>\n\n---\n\n"
         }
@@ -194,13 +221,18 @@ final class SessionStore {
         }.joined()
 
         let cards = s.notes.map { n -> String in
-            var src = Self.esc(n.imageFile)
-            if embedImages, let data = try? Data(contentsOf: folder.appendingPathComponent(n.imageFile)) {
-                src = "data:image/png;base64," + data.base64EncodedString()
+            var imageHTML = ""
+            if let file = n.imageFile {
+                var src = Self.esc(file)
+                if embedImages, let data = try? Data(contentsOf: folder.appendingPathComponent(file)) {
+                    src = "data:image/png;base64," + data.base64EncodedString()
+                }
+                imageHTML = "<a href=\"\(src)\" target=\"_blank\"><img src=\"\(src)\" alt=\"Screenshot for note \(n.number)\"></a>"
             }
+            let quoteHTML = n.quote.map { "<blockquote>\(Self.esc($0))</blockquote>" } ?? ""
             let body = n.text.isEmpty ? "<div class=\"text empty\">(no note)</div>"
                                       : "<div class=\"text\">\(Self.esc(n.text))</div>"
-            let app = n.sourceApp.map { " · \(Self.esc($0))" } ?? ""
+            let app = n.context.map { " · \(Self.esc($0))" } ?? ""
             return """
             <article class="card" id="note-\(n.number)">
               <header>
@@ -208,8 +240,9 @@ final class SessionStore {
                 <span class="chip" style="--c:\(n.kind.colorHex)">\(n.kind.label)</span>
                 <span class="meta">\(Self.time.string(from: n.createdAt))\(app)</span>
               </header>
+              \(quoteHTML)
               \(body)
-              <a href="\(src)" target="_blank"><img src="\(src)" alt="Screenshot for note \(n.number)"></a>
+              \(imageHTML)
             </article>
             """
         }.joined(separator: "\n")
@@ -222,8 +255,8 @@ final class SessionStore {
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>\(Self.esc(s.title)) — Review</title>
         <style>
-          :root { --bg:#faf9f7; --fg:#1c1917; --muted:#78716c; --card:#fff; --line:#e7e5e4; --accent:#f28c1a; }
-          @media (prefers-color-scheme: dark) { :root { --bg:#171513; --fg:#f5f5f4; --muted:#a8a29e; --card:#211e1b; --line:#3a3532; } }
+          :root { --bg:#faf9f7; --fg:#1c1917; --muted:#78716c; --card:#fff; --line:#e7e5e4; --accent:#8B5CF6; }
+          @media (prefers-color-scheme: dark) { :root { --bg:#171513; --fg:#f5f5f4; --muted:#a8a29e; --card:#211e1b; --line:#3a3532; --accent:#A78BFA; } }
           * { box-sizing: border-box; }
           body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
           main { max-width: 880px; margin: 0 auto; padding: 48px 24px 80px; }
@@ -235,7 +268,9 @@ final class SessionStore {
           .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px 20px 20px; margin-bottom:22px; }
           .card header { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
           .num { font-weight:700; color:var(--accent); }
-          .meta { margin-left:auto; color:var(--muted); font-size:13px; }
+          .meta { margin-left:auto; color:var(--muted); font-size:13px; text-align:right; }
+          blockquote { margin:0 0 12px; padding:8px 14px; border-left:3px solid var(--accent); white-space:pre-wrap;
+                       background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius:0 8px 8px 0; font-size:14px; }
           .text { white-space: pre-wrap; margin: 0 0 14px; font-size: 15.5px; }
           .text.empty { color: var(--muted); font-style: italic; }
           img { display:block; max-width:100%; max-height:560px; margin:0 auto; border-radius:8px; border:1px solid var(--line); }

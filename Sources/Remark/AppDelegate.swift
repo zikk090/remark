@@ -5,19 +5,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let store = SessionStore()
     private let buddy = CursorBuddy()
     private let overlay = SelectionOverlay()
+    private let prefs = Preferences()
+    private let shortcuts = ShortcutStore()
+    private lazy var recorder = ShortcutRecorder(store: shortcuts)
+    private lazy var settings = SettingsWindowController(shortcuts: shortcuts, recorder: recorder, prefs: prefs)
+
     private var statusItem: NSStatusItem!
     private var noteController: NotePanelController?
     private var isSelecting = false
-
-    private var buddyEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "buddyEnabled") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "buddyEnabled") }
-    }
-
-    private var autoListen: Bool {
-        get { UserDefaults.standard.bool(forKey: "autoListen") }
-        set { UserDefaults.standard.set(newValue, forKey: "autoListen") }
-    }
 
     // MARK: Launch
 
@@ -32,10 +27,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
 
-        let mods = controlKey | optionKey
-        HotKeyCenter.shared.register(keyCode: kVK_ANSI_R, modifiers: mods) { [weak self] in self?.beginCapture() }
-        HotKeyCenter.shared.register(keyCode: kVK_ANSI_N, modifiers: mods) { [weak self] in self?.promptNewSession() }
-        HotKeyCenter.shared.register(keyCode: kVK_ANSI_B, modifiers: mods) { [weak self] in self?.toggleBuddy() }
+        shortcuts.onChange = { [weak self] in self?.registerHotkeys() }
+        recorder.onBegin = { HotKeyCenter.shared.unregisterAll() }
+        recorder.onEnd = { [weak self] in self?.registerHotkeys() }
+        prefs.onChange = { [weak self] in self?.refreshBuddy() }
+        registerHotkeys()
 
         store.onChange = { [weak self] in self?.refreshBuddy() }
         store.resumeLast()
@@ -46,7 +42,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    // MARK: Capture flow
+    private func registerHotkeys() {
+        HotKeyCenter.shared.unregisterAll()
+        var failed = Set<HotkeyAction>()
+        for action in HotkeyAction.allCases {
+            guard let s = shortcuts.shortcut(for: action) else { continue }
+            let ok = HotKeyCenter.shared.register(keyCode: s.keyCode, modifiers: s.modifiers) { [weak self] in
+                self?.perform(action)
+            }
+            if !ok { failed.insert(action) }
+        }
+        shortcuts.unavailable = failed
+    }
+
+    private func perform(_ action: HotkeyAction) {
+        switch action {
+        case .capture: beginCapture()
+        case .captureText: beginTextNote()
+        case .newSession: promptNewSession()
+        case .toggleBuddy: prefs.buddyEnabled.toggle()
+        }
+    }
+
+    // MARK: Screenshot notes
 
     private func beginCapture() {
         if let nc = noteController { nc.focus(); return }
@@ -55,7 +73,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !ScreenCapture.hasPermission && !confirmCaptureWithoutPermission() { return }
 
         let previousApp = NSWorkspace.shared.frontmostApplication
-        let sourceApp = previousApp?.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : previousApp?.localizedName
+        let isSelf = previousApp?.bundleIdentifier == Bundle.main.bundleIdentifier
+        let sourceApp = isSelf ? nil : previousApp?.localizedName
+        let windowTitle = isSelf ? nil : previousApp.flatMap { TextGrabber.focusedWindowTitle(pid: $0.processIdentifier) }
 
         isSelecting = true
         buddy.suppressed = true
@@ -79,24 +99,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                    "Make sure Remark has Screen Recording permission in System Settings › Privacy & Security.")
                     return
                 }
-                self.showNote(image: image, imageURL: url, anchor: rect,
-                              sourceApp: sourceApp, previousApp: previousApp)
+                let model = NoteViewModel(image: image, imageURL: url,
+                                          sourceApp: sourceApp, windowTitle: windowTitle,
+                                          sessionTitle: self.store.session?.title ?? "Review")
+                self.presentNote(model, anchor: rect, previousApp: previousApp)
             }
         }
     }
 
-    private func showNote(image: NSImage, imageURL: URL, anchor: CGRect,
-                          sourceApp: String?, previousApp: NSRunningApplication?) {
-        let model = NoteViewModel(image: image, sourceApp: sourceApp,
-                                  sessionTitle: store.session?.title ?? "Review")
-        let controller = NotePanelController(model: model, anchor: anchor, autoListen: autoListen)
+    // MARK: Text-selection notes
+
+    private func beginTextNote() {
+        if let nc = noteController { nc.focus(); return }
+        guard !isSelecting else { return }
+
+        guard TextGrabber.isTrusted else {
+            askForAccessibility()
+            return
+        }
+
+        let previousApp = NSWorkspace.shared.frontmostApplication
+        let isSelf = previousApp?.bundleIdentifier == Bundle.main.bundleIdentifier
+        let sourceApp = isSelf ? nil : previousApp?.localizedName
+        let windowTitle = isSelf ? nil : previousApp.flatMap { TextGrabber.focusedWindowTitle(pid: $0.processIdentifier) }
+        let mouse = NSEvent.mouseLocation
+
+        TextGrabber.grabSelectedText { [weak self] text in
+            guard let self else { return }
+            guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                let hint = self.shortcuts.shortcut(for: .captureText)?.display ?? "the shortcut"
+                Toast.show("Highlight some text first, then press \(hint)")
+                return
+            }
+            self.store.ensureSession()
+            let model = NoteViewModel(image: nil, imageURL: nil,
+                                      quote: text.trimmingCharacters(in: .whitespacesAndNewlines),
+                                      sourceApp: sourceApp, windowTitle: windowTitle,
+                                      sessionTitle: self.store.session?.title ?? "Review")
+            self.presentNote(model, anchor: CGRect(x: mouse.x, y: mouse.y, width: 1, height: 1),
+                             previousApp: previousApp)
+        }
+    }
+
+    private func askForAccessibility() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Allow Remark to read selected text"
+        alert.informativeText = "To comment on highlighted text, turn on Remark in System Settings › Privacy & Security › Accessibility. Remark only reads the selection when you press the shortcut."
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            TextGrabber.promptForTrust()
+            TextGrabber.openSettings()
+        }
+    }
+
+    // MARK: Note panel
+
+    private func presentNote(_ model: NoteViewModel, anchor: CGRect, previousApp: NSRunningApplication?) {
+        let controller = NotePanelController(model: model, anchor: anchor,
+                                             autoListen: prefs.autoListen,
+                                             autoExtract: prefs.autoExtractText)
         controller.onListeningChange = { [weak self] on in self?.buddy.model.listening = on }
         controller.onFinish = { [weak self] saved in
             guard let self else { return }
             if saved {
-                self.store.add(kind: model.kind, text: model.text, imageURL: imageURL, sourceApp: sourceApp)
-            } else {
-                try? FileManager.default.removeItem(at: imageURL)
+                self.store.add(kind: model.kind, text: model.text, imageURL: model.imageURL,
+                               quote: model.quote, sourceApp: model.sourceApp, windowTitle: model.windowTitle)
+            } else if let url = model.imageURL {
+                try? FileManager.default.removeItem(at: url)
             }
             self.buddy.model.listening = false
             self.noteController = nil
@@ -148,43 +219,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func refreshBuddy() {
-        buddy.model.title = store.session?.title ?? ""
         buddy.model.count = store.session?.notes.count ?? 0
-        buddy.enabled = buddyEnabled && store.isActive
+        if buddy.model.showCount != prefs.buddyShowCount { buddy.model.showCount = prefs.buddyShowCount }
+        if buddy.model.shape != prefs.buddyShape { buddy.model.shape = prefs.buddyShape }
+        if buddy.model.size != prefs.buddySize { buddy.model.size = prefs.buddySize }
+        buddy.enabled = prefs.buddyEnabled && store.isActive
     }
 
-    private func toggleBuddy() {
-        buddyEnabled.toggle()
-        refreshBuddy()
+    // MARK: Export
+
+    private func export(_ format: ExportFormat) {
+        guard let session = store.session else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSSavePanel()
+        panel.title = "Export “\(session.title)”"
+        panel.nameFieldStringValue = "\(SessionStore.slug(session.title)).\(format.fileExtension)"
+        panel.allowedContentTypes = [format.contentType]
+        panel.canCreateDirectories = true
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try Exporter.export(format, store: store, to: url, pageSize: prefs.pageSize)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            showAlert("Export failed", error.localizedDescription)
+        }
     }
 
     // MARK: Menu
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let ctrlOpt: NSEvent.ModifierFlags = [.control, .option]
 
+        let headerTitle: String
         if let s = store.session {
-            let header = NSMenuItem(title: "\(s.title)  ·  \(s.notes.count) note\(s.notes.count == 1 ? "" : "s")",
-                                    action: nil, keyEquivalent: "")
-            header.isEnabled = false
-            menu.addItem(header)
+            headerTitle = "\(s.title)  ·  \(s.notes.count) note\(s.notes.count == 1 ? "" : "s")"
         } else {
-            let header = NSMenuItem(title: "No active session", action: nil, keyEquivalent: "")
-            header.isEnabled = false
-            menu.addItem(header)
+            headerTitle = "No active session"
         }
+        let header = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
         menu.addItem(.separator())
 
-        item(menu, "Capture & Note", #selector(captureAction), key: "r", mods: ctrlOpt)
-        item(menu, "New Review Session…", #selector(newSessionAction), key: "n", mods: ctrlOpt)
+        item(menu, "Capture Area & Note", #selector(captureAction), shortcut: shortcuts.shortcut(for: .capture))
+        item(menu, "Note on Selected Text", #selector(textNoteAction), shortcut: shortcuts.shortcut(for: .captureText))
+        item(menu, "New Review Session…", #selector(newSessionAction), shortcut: shortcuts.shortcut(for: .newSession))
 
         menu.addItem(.separator())
         let active = store.isActive
         item(menu, "Open Report", #selector(openReport), enabled: active)
         item(menu, "Open Session Folder", #selector(openFolder), enabled: active)
         item(menu, "Copy Report as Markdown", #selector(copyMarkdown), enabled: active)
-        item(menu, "Export Shareable HTML", #selector(exportShareable), enabled: active)
+
+        let exportItem = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
+        exportItem.isEnabled = active
+        let exportMenu = NSMenu()
+        for format in ExportFormat.allCases {
+            let mi = NSMenuItem(title: format.title + "…", action: #selector(exportAction(_:)), keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = format.rawValue
+            exportMenu.addItem(mi)
+        }
+        exportItem.submenu = exportMenu
+        menu.addItem(exportItem)
 
         let recentItem = NSMenuItem(title: "Recent Sessions", action: nil, keyEquivalent: "")
         let recentMenu = NSMenu()
@@ -206,22 +304,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item(menu, "End Session", #selector(endSession), enabled: active)
 
         menu.addItem(.separator())
-        item(menu, "Show Cursor Buddy", #selector(toggleBuddyAction), key: "b", mods: ctrlOpt, state: buddyEnabled)
-        item(menu, "Start Talking Automatically", #selector(toggleAutoListen), state: autoListen)
-        item(menu, "Screen Recording Settings…", #selector(openScreenSettings))
+        let buddyItem = item(menu, "Show Cursor Buddy", #selector(toggleBuddyAction),
+                             shortcut: shortcuts.shortcut(for: .toggleBuddy))
+        buddyItem.state = prefs.buddyEnabled ? .on : .off
+        let settingsItem = item(menu, "Settings…", #selector(openSettings))
+        settingsItem.keyEquivalent = ","
+        settingsItem.keyEquivalentModifierMask = .command
         menu.addItem(.separator())
-        item(menu, "Quit Remark", #selector(quit), key: "q", mods: .command)
+        let quitItem = item(menu, "Quit Remark", #selector(quit))
+        quitItem.keyEquivalent = "q"
+        quitItem.keyEquivalentModifierMask = .command
     }
 
     @discardableResult
     private func item(_ menu: NSMenu, _ title: String, _ action: Selector,
-                      key: String = "", mods: NSEvent.ModifierFlags = [],
-                      state: Bool? = nil, enabled: Bool = true) -> NSMenuItem {
-        let mi = NSMenuItem(title: title, action: action, keyEquivalent: key)
-        mi.keyEquivalentModifierMask = mods
+                      shortcut: Shortcut? = nil, enabled: Bool = true) -> NSMenuItem {
+        let mi = NSMenuItem(title: title, action: action, keyEquivalent: shortcut?.menuKeyEquivalent ?? "")
+        if let shortcut { mi.keyEquivalentModifierMask = shortcut.menuModifiers }
         mi.target = self
         mi.isEnabled = enabled
-        if let state { mi.state = state ? .on : .off }
         menu.addItem(mi)
         return mi
     }
@@ -229,6 +330,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func captureAction() {
         // Let the menu close before the overlay appears.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self.beginCapture() }
+    }
+
+    @objc private func textNoteAction() {
+        // The menu steals focus; give it back to the app holding the selection first.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.beginTextNote() }
     }
 
     @objc private func newSessionAction() { promptNewSession() }
@@ -246,14 +352,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(store.markdown(), forType: .string)
+        Toast.show("Report copied as Markdown")
     }
 
-    @objc private func exportShareable() {
-        guard let url = store.exportShareable() else {
-            showAlert("Export failed", "Couldn't write the shareable HTML file.")
-            return
-        }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+    @objc private func exportAction(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let format = ExportFormat(rawValue: raw) else { return }
+        export(format)
     }
 
     @objc private func openRecent(_ sender: NSMenuItem) {
@@ -264,9 +368,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func endSession() { store.end() }
-    @objc private func toggleBuddyAction() { toggleBuddy() }
-    @objc private func toggleAutoListen() { autoListen.toggle() }
-    @objc private func openScreenSettings() { ScreenCapture.openSettings() }
+    @objc private func toggleBuddyAction() { prefs.buddyEnabled.toggle() }
+    @objc private func openSettings() { settings.show() }
     @objc private func quit() { NSApp.terminate(nil) }
 
     private func showAlert(_ title: String, _ message: String) {

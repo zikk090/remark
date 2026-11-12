@@ -6,24 +6,34 @@ final class HotKeyCenter {
     static let shared = HotKeyCenter()
 
     private var handlers: [UInt32: () -> Void] = [:]
-    private var refs: [EventHotKeyRef?] = []
+    private var refs: [UInt32: EventHotKeyRef] = [:]
     private var nextID: UInt32 = 1
     private var installed = false
 
-    func register(keyCode: Int, modifiers: Int, handler: @escaping () -> Void) {
+    /// Returns false if macOS refused the combo (usually because another app owns it).
+    @discardableResult
+    func register(keyCode: UInt32, modifiers: UInt32, handler: @escaping () -> Void) -> Bool {
         installIfNeeded()
         let id = nextID
         nextID += 1
-        handlers[id] = handler
 
         var ref: EventHotKeyRef?
         let hotKeyID = EventHotKeyID(signature: OSType(0x524D_524B), id: id) // 'RMRK'
-        let status = RegisterEventHotKey(UInt32(keyCode), UInt32(modifiers), hotKeyID,
+        let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID,
                                          GetApplicationEventTarget(), 0, &ref)
-        if status != noErr {
-            NSLog("Remark: could not register hotkey \(keyCode) (status \(status)) — another app may own it.")
+        guard status == noErr, let ref else {
+            NSLog("Remark: could not register hotkey \(keyCode)/\(modifiers) (status \(status))")
+            return false
         }
-        refs.append(ref)
+        handlers[id] = handler
+        refs[id] = ref
+        return true
+    }
+
+    func unregisterAll() {
+        refs.values.forEach { UnregisterEventHotKey($0) }
+        refs.removeAll()
+        handlers.removeAll()
     }
 
     fileprivate func fire(_ id: UInt32) {
