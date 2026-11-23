@@ -103,9 +103,12 @@ if (WaitFor { Get-ChildItem $root -Recurse -Filter session.json -ErrorAction Sil
 } else { Fail 'No session folder was created'; $sessionDir = $null }
 
 # ---------- 3. something to review ----------
+# Clear the runner's console windows off the desktop so screenshots show only the app being reviewed.
+(New-Object -ComObject Shell.Application).MinimizeAll()
+Start-Sleep 1
 $np = Start-Process notepad -PassThru
 Start-Sleep 2
-Keys 'Welcome to Acme. Sign in with your work email to continue.'
+Keys 'Welcome to Acme. Sign in with your work email to continue.{ENTER}{ENTER}Forgot your password? Reset it from the sign-in page.'
 Start-Sleep 1
 Shot '03-notepad'
 
@@ -126,7 +129,7 @@ Shot '06-after-first-save'
 # ---------- 5. text-selection note (Ctrl+Alt+T in Notepad) ----------
 [In]::SetForegroundWindow($np.MainWindowHandle) | Out-Null
 Start-Sleep 1
-Keys '^a'
+Keys '^{HOME}+{END}'   # select the first line
 [In]::Chord($VK_CTRL, $VK_ALT, 0x54)
 if (WaitFor { [In]::ForegroundTitle() -eq 'Remark note' } 10) { Pass 'Ctrl+Alt+T opened a text note' } else { Fail "Text note window didn't appear (foreground: '$([In]::ForegroundTitle())')" }
 Start-Sleep 1
@@ -154,6 +157,8 @@ if ($sessionDir) {
 # ---------- 7. settings window ----------
 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
 Stop-Process -Id $np.Id -Force -ErrorAction SilentlyContinue
+Start-Sleep 1
+(New-Object -ComObject Shell.Application).MinimizeAll()
 Start-Sleep 1
 $proc = Start-Process $Exe -ArgumentList '--show-settings' -PassThru
 if (WaitFor { [In]::ForegroundTitle() -eq 'Remark Settings' } 10) { Pass 'Settings window opened' } else { Fail "Settings didn't open (foreground: '$([In]::ForegroundTitle())')" }
