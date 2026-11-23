@@ -294,7 +294,7 @@ internal sealed class TrayController : IDisposable
         return item;
     }
 
-    private void ShowSettings()
+    public void ShowSettings()
     {
         if (_settings != null) { _settings.Activate(); return; }
         _settings = new SettingsWindow(_prefs,
