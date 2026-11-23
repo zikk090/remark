@@ -1,0 +1,31 @@
+      Screen: 1024x768
+PASS  Remark launched (pid 7212)
+PASS  Ctrl+Alt+N opened the New session dialog
+PASS  Session folder created: 2026-11-23_1406-ci-smoke-test
+PASS  Area capture opened the note window
+PASS  Ctrl+Alt+T opened a text note
+PASS  session.json has 2 notes
+PASS  Screenshot saved: shots/shot-001-e312.png
+PASS  Typed note text saved
+      Source app recorded: Notepad / *Untitled - Notepad
+PASS  Selected text captured: 'Welcome to Acme. Sign in with your work email to continue.'
+PASS  report.html written
+PASS  report.md written
+PASS  Settings window opened
+        [windows-session] session: CI smoke test (2 notes)
+        [windows-session] PASS Pdf 60762 bytes
+        [windows-session] PASS Html 16193 bytes
+        [windows-session] PASS Markdown 4245 bytes
+        [windows-session] PASS Json 843 bytes
+        [windows-session] PASS Csv 329 bytes
+PASS  All 5 export formats work (windows-session)
+        [mac-fixture] session: Mac fixture — Acme onboarding (2 notes)
+        [mac-fixture] PASS Pdf 87918 bytes
+        [mac-fixture] PASS Html 38614 bytes
+        [mac-fixture] PASS Markdown 11977 bytes
+        [mac-fixture] PASS Json 848 bytes
+        [mac-fixture] PASS Csv 336 bytes
+PASS  All 5 export formats work (mac-fixture)
+PASS  OCR read the fixture image
+PASS  No errors logged
+      Failures: 0

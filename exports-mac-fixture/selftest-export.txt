@@ -1,0 +1,6 @@
+session: Mac fixture — Acme onboarding (2 notes)
+PASS Pdf 87918 bytes
+PASS Html 38614 bytes
+PASS Markdown 11977 bytes
+PASS Json 848 bytes
+PASS Csv 336 bytes

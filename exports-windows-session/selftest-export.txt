@@ -1,0 +1,6 @@
+session: CI smoke test (2 notes)
+PASS Pdf 60762 bytes
+PASS Html 16193 bytes
+PASS Markdown 4245 bytes
+PASS Json 843 bytes
+PASS Csv 329 bytes

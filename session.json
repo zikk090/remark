@@ -1,0 +1,28 @@
+{
+  "id": "C749DDA4-2C55-4601-A465-0DE57DF2D7C5",
+  "title": "CI smoke test",
+  "createdAt": "2026-11-23T14:06:21Z",
+  "reviewer": "runneradmin",
+  "notes": [
+    {
+      "id": "DFCA3506-BB21-41B2-90A6-6D3C2E73F341",
+      "number": 1,
+      "createdAt": "2026-11-23T14:06:34Z",
+      "kind": "note",
+      "text": "The sign-in button is hard to find",
+      "imageFile": "shots/shot-001-e312.png",
+      "sourceApp": "Notepad",
+      "windowTitle": "*Untitled - Notepad"
+    },
+    {
+      "id": "B1C4AC2A-62E1-479A-BCBC-D7F7E0AEADC3",
+      "number": 2,
+      "createdAt": "2026-11-23T14:06:39Z",
+      "kind": "note",
+      "text": "Copy is clear",
+      "sourceApp": "Notepad",
+      "quote": "Welcome to Acme. Sign in with your work email to continue.",
+      "windowTitle": "*Untitled - Notepad"
+    }
+  ]
+}
