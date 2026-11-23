@@ -3,3 +3,9 @@ build/
 .swiftpm/
 *.xcodeproj/
 .DS_Store
+windows/**/bin/
+windows/**/obj/
+publish/
+dist/
+*.user
+.vs/
